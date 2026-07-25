@@ -66,6 +66,12 @@ describe('BlastEME boundary — cannot regress SEME', () => {
     expect(audience).toMatch(/interleaveByProvider/);
   });
 
+  test('start is guarded by BLASTEME_ALLOW_PROD_SEND (safe by default)', () => {
+    const run = src[path.resolve(__dirname, '../src/engine/run.js')];
+    expect(run).toMatch(/BLASTEME_ALLOW_PROD_SEND/);
+    expect(run).toMatch(/prod_send_disabled/);
+  });
+
   test('click links point at SEME tracking, not a parallel system', () => {
     const tracking = src[path.resolve(__dirname, '../src/engine/semeTracking.js')];
     expect(tracking).toMatch(/SEME_TRACKING_BASE_URL/);

@@ -13,6 +13,7 @@ app.get('/selftest', (req, res) => res.json({
   started_at: START_TIME,
   seme_tracking_base_url_set: Boolean(process.env.SEME_TRACKING_BASE_URL),
   sendgrid_from: process.env.SENDGRID_FROM_EMAIL || null,
+  prod_send_enabled: String(process.env.BLASTEME_ALLOW_PROD_SEND || '').toLowerCase() === 'true',
 }));
 
 app.use('/api/bulk', routes);

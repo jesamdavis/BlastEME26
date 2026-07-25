@@ -66,6 +66,16 @@ async function startRun(id) {
   const run = await getRun(id);
   if (!run) throw new Error('run not found');
 
+  // Safety guard (default OFF): BlastEME runs against the PROD database, so a
+  // /start would send REAL email to REAL people. This flag must be explicitly
+  // set to 'true' in env before any live send is allowed. Prevents an accidental
+  // real send while wiring up / testing. Set BLASTEME_ALLOW_PROD_SEND=true only
+  // when you've confirmed the target tag and are ready to actually mail.
+  if (String(process.env.BLASTEME_ALLOW_PROD_SEND || '').toLowerCase() !== 'true') {
+    await markStopped(id, 'blocked', 'prod_send_disabled_set_BLASTEME_ALLOW_PROD_SEND_true');
+    return { started: false, reason: 'prod_send_disabled', hint: 'set BLASTEME_ALLOW_PROD_SEND=true to enable live sending' };
+  }
+
   const lockToken = crypto.randomUUID();
   const { rows: claimed } = await query(
     `UPDATE bulk_send_runs
