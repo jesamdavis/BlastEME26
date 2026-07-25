@@ -39,18 +39,41 @@ async function sendBatch({ campaign, recipients }) {
       subjectLabel: campaign.subject_label,
     });
 
-    // Build dynamic_template_data: curated content + per-slot SEME tracking URLs
-    // + first_name. The template is BlastEME's own simple curated template; the
-    // click URLs inside it point at SEME's /r so clicks land in SEME.
+    // Emit SEME's exact template contract so BlastEME can use SEME-style
+    // templates unchanged (heroDeal*, dealSlotN*). Click URLs point at SEME's /r
+    // tracking endpoint so every click flows into SEME. Also emits the ad-stripe
+    // fields (email_url_encoded, sendid) and first_name for the subject/greeting.
+    const emailUrlEncoded = encodeURIComponent(r.email);
+    const sendid = `blasteme-${campaign.id}`;
+
     const dtd = {
       first_name: r.first_name || '',
       subject: campaign.subject_label,
+      email: r.email,
+      email_url_encoded: emailUrlEncoded,
+      sendid,
     };
+
+    // Map each curated slot to SEME's field names. 'hero' -> heroDeal*,
+    // numbered slots -> dealSlotN*.
     for (const s of campaign.slots) {
       const token = tokenBySlot[s.slot];
-      dtd[`slot_${s.slot}_title`] = s.deal_title || '';
-      dtd[`slot_${s.slot}_image`] = s.image_url || '';
-      dtd[`slot_${s.slot}_url`] = token ? buildTrackingUrl(token) : (s.affiliate_url || '');
+      const url = token ? buildTrackingUrl(token) : (s.affiliate_url || '');
+      if (String(s.slot).toLowerCase() === 'hero') {
+        dtd.heroDealTitle = s.deal_title || '';
+        dtd.heroDealClickUrl = url;
+        dtd.heroDealImageUrl = s.image_url || '';
+        dtd.heroDealPriceText = s.price_text || '';
+        dtd.heroDealDescription = s.description || '';
+        dtd.heroDealBrand = s.brand || '';
+        dtd.heroDealLogoUrl = s.logo_url || '';
+      } else {
+        const n = String(s.slot);
+        dtd[`dealSlot${n}Title`] = s.deal_title || '';
+        dtd[`dealSlot${n}ClickUrl`] = url;
+        dtd[`dealSlot${n}ImageUrl`] = s.image_url || '';
+        dtd[`dealSlot${n}PriceText`] = s.price_text || '';
+      }
     }
 
     personalizations.push({ to: [{ email: r.email }], dynamic_template_data: dtd });
