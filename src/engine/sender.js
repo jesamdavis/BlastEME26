@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const sgMail = require('@sendgrid/mail');
 const { query } = require('../db/pool');
 const { mintRecipientTokens, buildTrackingUrl } = require('./semeTracking');
@@ -76,8 +77,18 @@ async function sendBatch({ campaign, recipients }) {
       }
     }
 
-    personalizations.push({ to: [{ email: r.email }], subject: campaign.subject_label, dynamic_template_data: dtd });
-    logRows.push({ user_id: r.user_id, email: r.email });
+    // Per-recipient unique id (fixes webhook matching): SendGrid echoes
+    // custom_args back on EVERY event (delivered, block, bounce, spam, unsub),
+    // so SEME can match an event to exactly one row instead of a shared batch
+    // message-id. Purely additive — does not change how the send works.
+    const sendUid = crypto.randomUUID();
+    personalizations.push({
+      to: [{ email: r.email }],
+      subject: campaign.subject_label,
+      dynamic_template_data: dtd,
+      custom_args: { blasteme_send_uid: sendUid },
+    });
+    logRows.push({ user_id: r.user_id, email: r.email, send_uid: sendUid });
   }
 
   const msg = {
@@ -109,6 +120,7 @@ async function sendBatch({ campaign, recipients }) {
         sendError ? 'failed' : 'sent',
         JSON.stringify({
           blasteme_campaign_id: String(campaign.id),
+          blasteme_send_uid: row.send_uid,
           lane: 'blasteme_bulk',
           send_purpose: 'blasteme_bulk',
           ...(sendError ? { error: sendError } : {}),
