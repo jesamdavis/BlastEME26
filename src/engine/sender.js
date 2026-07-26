@@ -76,7 +76,7 @@ async function sendBatch({ campaign, recipients }) {
       }
     }
 
-    personalizations.push({ to: [{ email: r.email }], dynamic_template_data: dtd });
+    personalizations.push({ to: [{ email: r.email }], subject: campaign.subject_label, dynamic_template_data: dtd });
     logRows.push({ user_id: r.user_id, email: r.email });
   }
 
