@@ -4,6 +4,7 @@ const { query } = require('../db/pool');
 // exclude tag, mirror it here (or better, factor to a shared module later).
 const EXCLUDE_TAGS = [
   'list-hard-bounce',
+  'list-blocked',
   'list-suppressed',
   'list-unsubscribed',
   'list-spam',
