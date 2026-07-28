@@ -9,6 +9,10 @@ function getSecret() {
   return secret;
 }
 
+function hasConfiguredSecret() {
+  return Boolean(String(process.env.EMAIL_PREFERENCE_TOKEN_SECRET || '').trim());
+}
+
 function base64urlJson(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
@@ -33,6 +37,10 @@ function mintEmailPreferenceToken({ userId, email, ttlSeconds = DEFAULT_TTL_SECO
 }
 
 function buildEmailPreferenceUrl(input) {
+  // Preference links are additive. A missing secret must not abort an otherwise
+  // valid BlastEME batch; deployment checks still verify the variable exists.
+  if (!hasConfiguredSecret()) return '';
+
   const token = mintEmailPreferenceToken(input);
   const base = String(process.env.EMAIL_PREFERENCES_BASE_URL || 'https://www.8coupons.com/email-preferences').trim();
   const url = new URL(base);
@@ -43,6 +51,7 @@ function buildEmailPreferenceUrl(input) {
 module.exports = {
   TOKEN_PURPOSE,
   DEFAULT_TTL_SECONDS,
+  hasConfiguredSecret,
   mintEmailPreferenceToken,
   buildEmailPreferenceUrl,
 };
