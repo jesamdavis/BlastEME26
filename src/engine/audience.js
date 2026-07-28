@@ -9,6 +9,8 @@ const EXCLUDE_TAGS = [
   'list-unsubscribed',
   'list-spam',
   'list-suspected-bot-engagement',
+  'list-needs-validation',
+  'list-foreign-review',
 ];
 
 // SHARED cross-lane cooldown. Reads ALL email_logs.sent_at, so a BlastEME send
@@ -26,6 +28,8 @@ async function selectAudience({ targetTag, campaignId, limit = 100000 }) {
     `SELECT u.id AS user_id,
             LOWER(u.email) AS email,
             COALESCE(NULLIF(BTRIM(u.first_name),''), '') AS first_name,
+            COALESCE(NULLIF(BTRIM(u.city),''), NULLIF(BTRIM(u.metadata->>'city'),''), '') AS city,
+            COALESCE(NULLIF(BTRIM(u.zip),''), NULLIF(BTRIM(u.metadata->>'zip'),''), '') AS zip,
             LOWER(SPLIT_PART(u.email,'@',2)) AS domain
      FROM users u
      WHERE $1 = ANY(COALESCE(u.tags,'{}'::text[]))
