@@ -28,10 +28,11 @@ describe('email preference tokens', () => {
     expect(url.searchParams.get('token')).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
   });
 
-  test('requires a configured signing secret', () => {
+  test('returns a blank optional URL when the secret is not configured', () => {
     delete process.env.EMAIL_PREFERENCE_TOKEN_SECRET;
-    const { buildEmailPreferenceUrl } = require('../src/engine/emailPreferenceTokens');
-    expect(() => buildEmailPreferenceUrl({ userId: 'u1', email: 'a@example.com' }))
-      .toThrow('EMAIL_PREFERENCE_TOKEN_SECRET not set');
+    const { buildEmailPreferenceUrl, hasConfiguredSecret } = require('../src/engine/emailPreferenceTokens');
+
+    expect(hasConfiguredSecret()).toBe(false);
+    expect(buildEmailPreferenceUrl({ userId: 'u1', email: 'a@example.com' })).toBe('');
   });
 });
