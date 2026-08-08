@@ -80,6 +80,7 @@ async function sendBatch({ campaign, recipients }) {
         dtd[`dealSlot${n}ClickUrl`] = url;
         dtd[`dealSlot${n}ImageUrl`] = s.image_url || '';
         dtd[`dealSlot${n}PriceText`] = s.price_text || '';
+        dtd[`dealSlot${n}Brand`] = s.brand || '';
       }
     }
 
