@@ -90,7 +90,6 @@ async function sendBatch({ campaign, recipients }) {
     const sendUid = crypto.randomUUID();
     personalizations.push({
       to: [{ email: r.email }],
-      subject: campaign.subject_label,
       dynamic_template_data: dtd,
       custom_args: { blasteme_send_uid: sendUid },
     });
