@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const sgMail = require('@sendgrid/mail');
 const { query } = require('../db/pool');
 const { mintRecipientTokens, buildTrackingUrl } = require('./semeTracking');
+const { buildEmailPreferenceUrl } = require('./emailPreferenceTokens');
 const logger = require('../logger');
 
 const SENDGRID_MAX_PERSONALIZATIONS = 1000; // SendGrid hard limit per API call
@@ -43,12 +44,17 @@ async function sendBatch({ campaign, recipients }) {
     // Emit SEME's exact template contract so BlastEME can use SEME-style
     // templates unchanged (heroDeal*, dealSlotN*). Click URLs point at SEME's /r
     // tracking endpoint so every click flows into SEME. Also emits the ad-stripe
-    // fields (email_url_encoded, sendid) and first_name for the subject/greeting.
+    // fields (email_url_encoded, sendid), location preference link, and first_name.
     const emailUrlEncoded = encodeURIComponent(r.email);
     const sendid = `blasteme-${campaign.id}`;
+    const preferenceUrl = buildEmailPreferenceUrl({ userId: r.user_id, email: r.email });
 
     const dtd = {
       first_name: r.first_name || '',
+      city: r.city || '',
+      zip: r.zip || '',
+      preference_url: preferenceUrl,
+      email_preferences_url: preferenceUrl,
       subject: campaign.subject_label,
       email: r.email,
       email_url_encoded: emailUrlEncoded,
@@ -74,6 +80,7 @@ async function sendBatch({ campaign, recipients }) {
         dtd[`dealSlot${n}ClickUrl`] = url;
         dtd[`dealSlot${n}ImageUrl`] = s.image_url || '';
         dtd[`dealSlot${n}PriceText`] = s.price_text || '';
+        dtd[`dealSlot${n}Brand`] = s.brand || '';
       }
     }
 
@@ -84,7 +91,6 @@ async function sendBatch({ campaign, recipients }) {
     const sendUid = crypto.randomUUID();
     personalizations.push({
       to: [{ email: r.email }],
-      subject: campaign.subject_label,
       dynamic_template_data: dtd,
       custom_args: { blasteme_send_uid: sendUid },
     });
