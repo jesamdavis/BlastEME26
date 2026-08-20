@@ -1,4 +1,5 @@
 const { query } = require('../db/pool');
+const { getGlobalCooldownConfig } = require('../config/cooldown');
 
 // SHARED with SEME — identical exclusion set. Do NOT diverge. If SEME adds an
 // exclude tag, mirror it here (or better, factor to a shared module later).
@@ -13,17 +14,16 @@ const EXCLUDE_TAGS = [
   'list-foreign-review',
 ];
 
-// SHARED cross-lane cooldown. Reads ALL email_logs.sent_at, so a BlastEME send
-// respects SEME sends and vice-versa — this is what prevents cross-lane
-// duplicates (the reason cohorts must dedupe across BOTH lanes).
-const GLOBAL_COOLDOWN_HOURS = 24;
-
 /**
- * Pull sendable recipients for a tagged segment, applying the SAME safety
- * filters SEME uses: active status, exclude tags, suppression_list, 24h
- * cross-lane cooldown, and (BlastEME-specific) not already sent in THIS campaign.
+ * Pull sendable recipients for a tagged segment, applying the shared safety
+ * filters: active status, exclude tags, suppression_list, configurable
+ * cross-lane cooldown, and not already sent in THIS BlastEME campaign.
+ *
+ * The cooldown is safe-by-default: enabled for 24 hours unless explicitly
+ * disabled with BLASTEME_ENFORCE_GLOBAL_COOLDOWN=false.
  */
 async function selectAudience({ targetTag, campaignId, limit = 100000 }) {
+  const cooldown = getGlobalCooldownConfig();
   const { rows } = await query(
     `SELECT u.id AS user_id,
             LOWER(u.email) AS email,
@@ -37,17 +37,27 @@ async function selectAudience({ targetTag, campaignId, limit = 100000 }) {
        AND COALESCE(NULLIF(BTRIM(u.email),''), NULL) IS NOT NULL
        AND NOT (COALESCE(u.tags,'{}'::text[]) && $2::text[])
        AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE LOWER(s.email) = LOWER(u.email))
-       AND NOT EXISTS (
-         SELECT 1 FROM email_logs el
-         WHERE el.user_id = u.id AND el.sent_at >= NOW() - ($3 || ' hours')::interval
+       AND (
+         NOT $3::boolean
+         OR NOT EXISTS (
+           SELECT 1 FROM email_logs el
+           WHERE el.user_id = u.id AND el.sent_at >= NOW() - ($4 || ' hours')::interval
+         )
        )
        AND NOT EXISTS (
          SELECT 1 FROM email_logs el
-         WHERE el.user_id = u.id AND el.metadata->>'blasteme_campaign_id' = $4
+         WHERE el.user_id = u.id AND el.metadata->>'blasteme_campaign_id' = $5
        )
      ORDER BY u.id
-     LIMIT $5`,
-    [targetTag, EXCLUDE_TAGS, String(GLOBAL_COOLDOWN_HOURS), String(campaignId), limit]
+     LIMIT $6`,
+    [
+      targetTag,
+      EXCLUDE_TAGS,
+      cooldown.enabled,
+      String(cooldown.hours),
+      String(campaignId),
+      limit,
+    ]
   );
   return rows;
 }
@@ -76,4 +86,4 @@ function interleaveByProvider(recipients) {
   return out;
 }
 
-module.exports = { selectAudience, interleaveByProvider, EXCLUDE_TAGS, GLOBAL_COOLDOWN_HOURS };
+module.exports = { selectAudience, interleaveByProvider, EXCLUDE_TAGS };
