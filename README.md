@@ -31,9 +31,9 @@ SEME's database. BlastEME owns nothing but the fast send loop.
 ## Environment
 ```
 DATABASE_URL                         # SAME as SEME (shared source of truth)
-SEME_TRACKING_BASE_URL               # SEME production tracking host
+SEME_TRACKING_BASE_URL               # SEME host, e.g. https://s-eme-cm26-production.up.railway.app
 SENDGRID_API_KEY
-SENDGRID_FROM_EMAIL                  # warmed sending address
+SENDGRID_FROM_EMAIL                  # deals@email.eightcoupons.com (reuse warmed subdomain)
 SENDGRID_FROM_NAME
 ADMIN_SECRET
 BLASTEME_ALLOW_PROD_SEND             # must be true for live sends
@@ -62,23 +62,30 @@ after deployment and before a send.
 - `GET  /api/bulk/runs/:id` — status.
 - `GET  /selftest` — boot/config check.
 
-`slots` shape:
+`slots` shape (BlastEME's own simple curated template — no slotting logic):
 ```json
 [{ "slot": "hero", "deal_title": "...", "image_url": "...", "affiliate_url": "..." },
  { "slot": "1", "deal_title": "...", "image_url": "...", "affiliate_url": "..." }]
 ```
 
 ## STAGING-FIRST test plan (do not skip)
-1. Deploy to Railway **staging** with the cooldown left enabled.
-2. Run `npm test`.
+1. Deploy to Railway **staging**. Set `DATABASE_URL` to read SEME prod
+   suppression/tracking (shared source of truth — confirmed decision).
+   `SEME_TRACKING_BASE_URL` → SEME prod (so tokens resolve). `SENDGRID_FROM_EMAIL`
+   → the warmed `email.eightcoupons.com`. Leave the cooldown enabled.
+2. `npm test` — boundary and cooldown tests must pass.
 3. Verify `/selftest` reports `global_cooldown_enabled: true` and
    `global_cooldown_hours: 24`.
-4. Confirm suppression and the enabled cooldown exclude correctly.
-5. In staging only, set `BLASTEME_ENFORCE_GLOBAL_COOLDOWN=false`, redeploy and
+4. Create a run targeting a tag containing ONLY seed addresses. Confirm your
+   own inboxes deliver/open/click and SEME receives the click log.
+5. Confirm suppression and the enabled cooldown exclude correctly.
+6. In staging only, set `BLASTEME_ENFORCE_GLOBAL_COOLDOWN=false`, redeploy and
    verify the cooldown-only recipient returns while suppression still excludes.
-6. Restore the production value to `true` unless a specific repeat-send has
+7. Restore the production value to `true` unless a specific repeat-send has
    been explicitly approved.
+8. Dry-run a small real segment and check domain mix before a capped live send.
 
 ## Build a template first
-BlastEME needs its own SendGrid dynamic template. Click URLs inside come from
-the dynamic slot URL fields injected at send time.
+BlastEME needs its OWN simple SendGrid dynamic template (hero + N curated deals +
+`{{first_name}}`, no slot-visibility gates). Click URLs inside come from
+`slot_N_url` (SEME tracking links injected at send time).
