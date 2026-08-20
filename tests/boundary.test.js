@@ -1,6 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
+// BlastEME is a SENDER. It must never write to SEME flight tables or the Brevo
+// revenue lane. It may ONLY: read shared user/suppression/email_logs data, write
+// email_logs (shared tracking) and its own bulk_send_runs table, and insert
+// deal-token rows into the shared flight_recipient_deals table with
+// send_context_type='blasteme'. These tests enforce that boundary so a bug here
+// can never regress SEME.
+
 function readAllSrc() {
   const dir = path.resolve(__dirname, '../src');
   const out = {};
@@ -35,6 +42,7 @@ describe('BlastEME boundary — cannot regress SEME', () => {
   });
 
   test('only writes flight_recipient_deals with blasteme send context', () => {
+    // If it inserts into flight_recipient_deals at all, it must be as 'blasteme'.
     if (/INSERT INTO flight_recipient_deals/i.test(all)) {
       expect(all).toMatch(/'blasteme'/);
     }
