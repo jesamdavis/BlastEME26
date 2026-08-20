@@ -8,10 +8,10 @@ Every click, open, suppression, unsubscribe, and engagement stat flows into
 SEME's database. BlastEME owns nothing but the fast send loop.
 
 ## What it does
-1. Pulls a tagged segment from SEME's `users`, applying the **identical**
-   safety filters SEME uses: active status, exclude tags, `suppression_list`,
-   and the **24h cross-lane cooldown** (reads all `email_logs.sent_at`, so it
-   can't duplicate a SEME send).
+1. Pulls a tagged segment from SEME's `users`, applying active-status,
+   exclusion-tag and suppression-list safety filters. Its cross-lane cooldown
+   defaults to **enabled for 24 hours** and reads all `email_logs.sent_at`, so a
+   BlastEME send normally cannot duplicate a recent SEME or BlastEME send.
 2. **Interleaves by provider** so no single provider (e.g. Gmail) gets a flood
    in one window (throttle protection).
 3. Mints per-recipient click tokens via SEME's shared `flight_recipient_deals`
@@ -30,14 +30,27 @@ SEME's database. BlastEME owns nothing but the fast send loop.
 
 ## Environment
 ```
-DATABASE_URL            # SAME as SEME (shared source of truth)
-SEME_TRACKING_BASE_URL  # SEME host, e.g. https://s-eme-cm26-production.up.railway.app
+DATABASE_URL                         # SAME as SEME (shared source of truth)
+SEME_TRACKING_BASE_URL               # SEME host, e.g. https://s-eme-cm26-production.up.railway.app
 SENDGRID_API_KEY
-SENDGRID_FROM_EMAIL     # deals@email.eightcoupons.com (reuse warmed subdomain)
+SENDGRID_FROM_EMAIL                  # deals@email.eightcoupons.com (reuse warmed subdomain)
 SENDGRID_FROM_NAME
 ADMIN_SECRET
+BLASTEME_ALLOW_PROD_SEND             # must be true for live sends
+BLASTEME_ENFORCE_GLOBAL_COOLDOWN      # default true; false/0/off/no disables it
+BLASTEME_GLOBAL_COOLDOWN_HOURS        # default 24; positive number when enabled
 PORT
 ```
+
+`BLASTEME_ENFORCE_GLOBAL_COOLDOWN=false` disables only the recent-send
+exclusion. Suppression-list checks, exclusion tags, active-user checks and the
+same-campaign deduplication check always remain enforced. Use the override only
+for an explicitly approved cohort because it permits repeat sends inside the
+normal cooldown window.
+
+`GET /selftest` reports `global_cooldown_enabled` and
+`global_cooldown_hours`, allowing operators to verify the effective setting
+after deployment and before a send.
 
 ## API
 - `POST /api/bulk/runs` — create (does not send). Body: name, target_tag,
@@ -59,19 +72,20 @@ PORT
 1. Deploy to Railway **staging**. Set `DATABASE_URL` to read SEME prod
    suppression/tracking (shared source of truth — confirmed decision).
    `SEME_TRACKING_BASE_URL` → SEME prod (so tokens resolve). `SENDGRID_FROM_EMAIL`
-   → the warmed `email.eightcoupons.com`.
-2. `npm test` — boundary tests must pass (no flight-table access).
-3. Create a run targeting a tag containing ONLY your seed addresses. Confirm on
-   your own inboxes: delivered + open + click, and that the click lands in SEME's
-   `click_logs` (not a parallel table).
-4. Confirm suppression + 24h cooldown exclude correctly (tag a suppressed seed;
-   it must be skipped).
-5. Dry-run a small real segment (100 Athleta openers) — check domain mix, no send.
-6. Only then: capped real send, watching bounce + Postmaster.
+   → the warmed `email.eightcoupons.com`. Leave the cooldown enabled.
+2. `npm test` — boundary and cooldown tests must pass.
+3. Verify `/selftest` reports `global_cooldown_enabled: true` and
+   `global_cooldown_hours: 24`.
+4. Create a run targeting a tag containing ONLY seed addresses. Confirm your
+   own inboxes deliver/open/click and SEME receives the click log.
+5. Confirm suppression and the enabled cooldown exclude correctly.
+6. In staging only, set `BLASTEME_ENFORCE_GLOBAL_COOLDOWN=false`, redeploy and
+   verify the cooldown-only recipient returns while suppression still excludes.
+7. Restore the production value to `true` unless a specific repeat-send has
+   been explicitly approved.
+8. Dry-run a small real segment and check domain mix before a capped live send.
 
 ## Build a template first
 BlastEME needs its OWN simple SendGrid dynamic template (hero + N curated deals +
 `{{first_name}}`, no slot-visibility gates). Click URLs inside come from
 `slot_N_url` (SEME tracking links injected at send time).
-```
-```

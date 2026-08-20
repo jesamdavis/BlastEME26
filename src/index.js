@@ -1,5 +1,6 @@
 const express = require('express');
 const { ensureTables } = require('./engine/run');
+const { getGlobalCooldownConfig } = require('./config/cooldown');
 const routes = require('./api/routes');
 const logger = require('./logger');
 
@@ -7,14 +8,19 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (req, res) => res.json({ ok: true, service: 'blasteme' }));
-app.get('/selftest', (req, res) => res.json({
-  ok: true,
-  service: 'blasteme',
-  started_at: START_TIME,
-  seme_tracking_base_url_set: Boolean(process.env.SEME_TRACKING_BASE_URL),
-  sendgrid_from: process.env.SENDGRID_FROM_EMAIL || null,
-  prod_send_enabled: String(process.env.BLASTEME_ALLOW_PROD_SEND || '').toLowerCase() === 'true',
-}));
+app.get('/selftest', (req, res) => {
+  const cooldown = getGlobalCooldownConfig();
+  res.json({
+    ok: true,
+    service: 'blasteme',
+    started_at: START_TIME,
+    seme_tracking_base_url_set: Boolean(process.env.SEME_TRACKING_BASE_URL),
+    sendgrid_from: process.env.SENDGRID_FROM_EMAIL || null,
+    prod_send_enabled: String(process.env.BLASTEME_ALLOW_PROD_SEND || '').toLowerCase() === 'true',
+    global_cooldown_enabled: cooldown.enabled,
+    global_cooldown_hours: cooldown.hours,
+  });
+});
 
 app.use('/api/bulk', routes);
 

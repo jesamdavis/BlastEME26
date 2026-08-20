@@ -48,12 +48,15 @@ describe('BlastEME boundary — cannot regress SEME', () => {
     }
   });
 
-  test('applies the shared suppression + cooldown filter', () => {
+  test('keeps suppression mandatory and cooldown safe by default', () => {
     const audience = src[path.resolve(__dirname, '../src/engine/audience.js')];
+    const cooldown = src[path.resolve(__dirname, '../src/config/cooldown.js')];
     expect(audience).toMatch(/suppression_list/);
     expect(audience).toMatch(/list-suppressed/);
-    expect(audience).toMatch(/24/); // cooldown hours
     expect(audience).toMatch(/sent_at >= NOW\(\) -/);
+    expect(cooldown).toMatch(/DEFAULT_GLOBAL_COOLDOWN_HOURS = 24/);
+    expect(cooldown).toMatch(/BLASTEME_ENFORCE_GLOBAL_COOLDOWN/);
+    expect(cooldown).toMatch(/BLASTEME_GLOBAL_COOLDOWN_HOURS/);
   });
 
   test('bounce ceiling includes failed (the SEME fix)', () => {
