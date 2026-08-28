@@ -5,9 +5,14 @@ const { sendBatch, SENDGRID_MAX_PERSONALIZATIONS, FAILURE_STATUSES } = require('
 const logger = require('../logger');
 
 const activeRuns = new Map();
+const BOUNCE_SAMPLE_FLOOR = 100;
+const LOCK_STALE_MINUTES = 30;
+const SCHEDULER_INTERVAL_MS = 30000;
+let schedulerTimer = null;
+let schedulerRunning = false;
 
 async function ensureTables() {
-  // BlastEME owns ONLY this table. It never creates/alters any SEME table.
+  // BlastEME owns ONLY this table. It never creates/alters any SEME-owned table.
   await query(`
     CREATE TABLE IF NOT EXISTS bulk_send_runs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -16,10 +21,12 @@ async function ensureTables() {
       template_id TEXT NOT NULL,
       subject_label TEXT,
       slots JSONB NOT NULL DEFAULT '[]'::jsonb,
+      tracked_links JSONB NOT NULL DEFAULT '{}'::jsonb,
       batch_size INT NOT NULL DEFAULT 500,
       inter_batch_delay_seconds INT NOT NULL DEFAULT 120,
       max_bounce_rate NUMERIC NOT NULL DEFAULT 0.03,
       max_total_recipients INT,
+      scheduled_at TIMESTAMPTZ,
       status TEXT NOT NULL DEFAULT 'ready',
       stop_requested BOOLEAN NOT NULL DEFAULT FALSE,
       stop_reason TEXT,
@@ -30,6 +37,10 @@ async function ensureTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
+
+  // Safe additive upgrades for an existing BlastEME table.
+  await query(`ALTER TABLE bulk_send_runs ADD COLUMN IF NOT EXISTS tracked_links JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  await query(`ALTER TABLE bulk_send_runs ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ`);
   return true;
 }
 
@@ -59,20 +70,17 @@ async function markStopped(id, status, reason) {
   );
 }
 
-const BOUNCE_SAMPLE_FLOOR = 100;
-const LOCK_STALE_MINUTES = 30;
-
-async function startRun(id) {
+async function startRun(id, { scheduledOnly = false } = {}) {
   const run = await getRun(id);
   if (!run) throw new Error('run not found');
 
   // Safety guard (default OFF): BlastEME runs against the PROD database, so a
   // /start would send REAL email to REAL people. This flag must be explicitly
-  // set to 'true' in env before any live send is allowed. Prevents an accidental
-  // real send while wiring up / testing. Set BLASTEME_ALLOW_PROD_SEND=true only
-  // when you've confirmed the target tag and are ready to actually mail.
+  // set to 'true' before any live send is allowed.
   if (String(process.env.BLASTEME_ALLOW_PROD_SEND || '').toLowerCase() !== 'true') {
-    await markStopped(id, 'blocked', 'prod_send_disabled_set_BLASTEME_ALLOW_PROD_SEND_true');
+    if (!scheduledOnly) {
+      await markStopped(id, 'blocked', 'prod_send_disabled_set_BLASTEME_ALLOW_PROD_SEND_true');
+    }
     return { started: false, reason: 'prod_send_disabled', hint: 'set BLASTEME_ALLOW_PROD_SEND=true to enable live sending' };
   }
 
@@ -81,11 +89,16 @@ async function startRun(id) {
     `UPDATE bulk_send_runs
      SET status='running', stop_requested=FALSE, stop_reason=NULL,
          lock_token=$2, lock_acquired_at=NOW(), updated_at=NOW()
-     WHERE id=$1 AND (lock_token IS NULL OR lock_acquired_at < NOW() - ($3 || ' minutes')::interval)
+     WHERE id=$1
+       AND (lock_token IS NULL OR lock_acquired_at < NOW() - ($3 || ' minutes')::interval)
+       AND (
+         $4::boolean = FALSE
+         OR (status='ready' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW())
+       )
      RETURNING id`,
-    [id, lockToken, String(LOCK_STALE_MINUTES)]
+    [id, lockToken, String(LOCK_STALE_MINUTES), scheduledOnly]
   );
-  if (!claimed.length) return { started: false, reason: 'already_running' };
+  if (!claimed.length) return { started: false, reason: scheduledOnly ? 'not_due_or_already_running' : 'already_running' };
 
   const loop = runLoop(id, lockToken);
   activeRuns.set(String(id), loop);
@@ -107,6 +120,7 @@ async function runLoop(id, lockToken) {
       template_id: run.template_id,
       subject_label: run.subject_label,
       slots: run.slots || [],
+      tracked_links: run.tracked_links || {},
     };
     const cap = run.max_total_recipients || null;
     const batchSize = Math.min(run.batch_size || 500, SENDGRID_MAX_PERSONALIZATIONS);
@@ -155,9 +169,56 @@ async function runLoop(id, lockToken) {
   }
 }
 
+async function startDueRuns() {
+  if (schedulerRunning) return { checked: false, reason: 'scheduler_tick_already_running' };
+  if (String(process.env.BLASTEME_ALLOW_PROD_SEND || '').toLowerCase() !== 'true') {
+    return { checked: false, reason: 'prod_send_disabled' };
+  }
+
+  schedulerRunning = true;
+  try {
+    const { rows } = await query(
+      `SELECT id
+       FROM bulk_send_runs
+       WHERE status='ready'
+         AND scheduled_at IS NOT NULL
+         AND scheduled_at <= NOW()
+       ORDER BY scheduled_at ASC
+       LIMIT 20`
+    );
+
+    let started = 0;
+    for (const row of rows) {
+      const out = await startRun(row.id, { scheduledOnly: true });
+      if (out.started) started += 1;
+    }
+    return { checked: true, due: rows.length, started };
+  } finally {
+    schedulerRunning = false;
+  }
+}
+
+function startScheduler() {
+  if (schedulerTimer) return schedulerTimer;
+  schedulerTimer = setInterval(() => {
+    startDueRuns().catch(err => logger.error(`scheduler tick failed: ${err.message}`));
+  }, SCHEDULER_INTERVAL_MS);
+  if (typeof schedulerTimer.unref === 'function') schedulerTimer.unref();
+  return schedulerTimer;
+}
+
 async function requestStop(id) {
   await query(`UPDATE bulk_send_runs SET stop_requested=TRUE, updated_at=NOW() WHERE id=$1`, [id]);
   return { stop_requested: true };
 }
 
-module.exports = { ensureTables, getRun, startRun, requestStop, getRunHealth };
+module.exports = {
+  ensureTables,
+  getRun,
+  startRun,
+  requestStop,
+  getRunHealth,
+  startDueRuns,
+  startScheduler,
+  SCHEDULER_INTERVAL_MS,
+};
