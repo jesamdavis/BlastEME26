@@ -42,7 +42,6 @@ describe('BlastEME boundary — cannot regress SEME', () => {
   });
 
   test('only writes flight_recipient_deals with blasteme send context', () => {
-    // If it inserts into flight_recipient_deals at all, it must be as 'blasteme'.
     if (/INSERT INTO flight_recipient_deals/i.test(all)) {
       expect(all).toMatch(/'blasteme'/);
     }
@@ -52,7 +51,7 @@ describe('BlastEME boundary — cannot regress SEME', () => {
     const audience = src[path.resolve(__dirname, '../src/engine/audience.js')];
     expect(audience).toMatch(/suppression_list/);
     expect(audience).toMatch(/list-suppressed/);
-    expect(audience).toMatch(/24/); // cooldown hours
+    expect(audience).toMatch(/24/);
     expect(audience).toMatch(/sent_at >= NOW\(\) -/);
   });
 
@@ -76,5 +75,32 @@ describe('BlastEME boundary — cannot regress SEME', () => {
     const tracking = src[path.resolve(__dirname, '../src/engine/semeTracking.js')];
     expect(tracking).toMatch(/SEME_TRACKING_BASE_URL/);
     expect(tracking).toMatch(/\/r\?t=/);
+  });
+
+  test('generic tracked links are first-party SEME links', () => {
+    const sender = src[path.resolve(__dirname, '../src/engine/sender.js')];
+    expect(sender).toMatch(/tracked_links/);
+    expect(sender).toMatch(/link:\$\{key\}/);
+    expect(sender).toMatch(/buildTrackingUrl\(token\)/);
+  });
+
+  test('SendGrid click tracking is explicitly enabled as secondary fallback', () => {
+    const sender = src[path.resolve(__dirname, '../src/engine/sender.js')];
+    expect(sender).toMatch(/clickTracking:\s*\{\s*enable:\s*true,\s*enableText:\s*true\s*\}/);
+  });
+
+  test('scheduler only selects ready due runs', () => {
+    const run = src[path.resolve(__dirname, '../src/engine/run.js')];
+    expect(run).toMatch(/status='ready'/);
+    expect(run).toMatch(/scheduled_at IS NOT NULL/);
+    expect(run).toMatch(/scheduled_at <= NOW\(\)/);
+    expect(run).toMatch(/scheduledOnly:\s*true/);
+  });
+
+  test('existing BlastEME table upgrades are additive only', () => {
+    const run = src[path.resolve(__dirname, '../src/engine/run.js')];
+    expect(run).toMatch(/ADD COLUMN IF NOT EXISTS tracked_links/);
+    expect(run).toMatch(/ADD COLUMN IF NOT EXISTS scheduled_at/);
+    expect(run).not.toMatch(/DROP COLUMN|DROP TABLE/i);
   });
 });
