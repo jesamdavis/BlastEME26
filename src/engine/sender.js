@@ -14,6 +14,21 @@ function ensureApiKey() {
   sgMail.setApiKey(key);
 }
 
+function normalizeTrackedLinkEntries(trackedLinks = {}) {
+  return Object.entries(trackedLinks || {}).map(([key, raw]) => {
+    const item = typeof raw === 'string' ? { url: raw } : (raw || {});
+    return {
+      key,
+      slot: `link:${key}`,
+      affiliate_url: item.url || '',
+      deal_title: item.title || key,
+      product_title: item.title || key,
+      deal_key: item.deal_key || null,
+      category: item.category || null,
+    };
+  }).filter(item => item.affiliate_url);
+}
+
 /**
  * Send one SendGrid batch (<=1000 recipients) via personalizations. Each
  * recipient gets their own first_name + their own SEME tracking links minted
@@ -31,20 +46,24 @@ async function sendBatch({ campaign, recipients }) {
   const logRows = [];
 
   for (const r of recipients) {
-    // Mint SEME tracking tokens for this recipient's curated slots.
+    const trackedLinkEntries = normalizeTrackedLinkEntries(campaign.tracked_links);
+    const trackingItems = [...(campaign.slots || []), ...trackedLinkEntries];
+
+    // Mint SEME tracking tokens for both curated deal slots and generic template
+    // links. Generic links use slot='link:<key>' in the same shared SEME token
+    // table, so SEME /r remains the first-party source of truth.
     const tokenBySlot = await mintRecipientTokens({
       campaignId: campaign.id,
       userId: r.user_id,
       email: r.email,
-      slots: campaign.slots,
+      slots: trackingItems,
       templateId: campaign.template_id,
       subjectLabel: campaign.subject_label,
     });
 
     // Emit SEME's exact template contract so BlastEME can use SEME-style
     // templates unchanged (heroDeal*, dealSlotN*). Click URLs point at SEME's /r
-    // tracking endpoint so every click flows into SEME. Also emits the ad-stripe
-    // fields (email_url_encoded, sendid), location preference link, and first_name.
+    // tracking endpoint so every dynamic campaign link flows into SEME.
     const emailUrlEncoded = encodeURIComponent(r.email);
     const sendid = `blasteme-${campaign.id}`;
     const preferenceUrl = buildEmailPreferenceUrl({ userId: r.user_id, email: r.email });
@@ -59,11 +78,12 @@ async function sendBatch({ campaign, recipients }) {
       email: r.email,
       email_url_encoded: emailUrlEncoded,
       sendid,
+      tracked_links: {},
     };
 
     // Map each curated slot to SEME's field names. 'hero' -> heroDeal*,
     // numbered slots -> dealSlotN*.
-    for (const s of campaign.slots) {
+    for (const s of (campaign.slots || [])) {
       const token = tokenBySlot[s.slot];
       const url = token ? buildTrackingUrl(token) : (s.affiliate_url || '');
       if (String(s.slot).toLowerCase() === 'hero') {
@@ -84,10 +104,17 @@ async function sendBatch({ campaign, recipients }) {
       }
     }
 
-    // Per-recipient unique id (fixes webhook matching): SendGrid echoes
-    // custom_args back on EVERY event (delivered, block, bounce, spam, unsub),
-    // so SEME can match an event to exactly one row instead of a shared batch
-    // message-id. Purely additive — does not change how the send works.
+    // Generic campaign links for templates that are not deal-slot based.
+    // Templates can use either {{tracked_links.intrepid}} or {{intrepid_url}}.
+    for (const item of trackedLinkEntries) {
+      const token = tokenBySlot[item.slot];
+      const url = token ? buildTrackingUrl(token) : item.affiliate_url;
+      dtd.tracked_links[item.key] = url;
+      dtd[`${item.key}_url`] = url;
+    }
+
+    // Per-recipient unique id: SendGrid echoes custom_args on provider events so
+    // SEME can match the event to exactly one email_logs row.
     const sendUid = crypto.randomUUID();
     personalizations.push({
       to: [{ email: r.email }],
@@ -101,6 +128,12 @@ async function sendBatch({ campaign, recipients }) {
     from: { email: process.env.SENDGRID_FROM_EMAIL, name: process.env.SENDGRID_FROM_NAME || '8coupons' },
     templateId: campaign.template_id,
     personalizations,
+    // Secondary validation layer. First-party SEME /r remains authoritative for
+    // dynamic tracked_links/slots; SendGrid rewriting also covers any legacy
+    // hard-coded links still present in a template.
+    trackingSettings: {
+      clickTracking: { enable: true, enableText: true },
+    },
   };
 
   let sgMessageId = null;
@@ -138,4 +171,9 @@ async function sendBatch({ campaign, recipients }) {
   return { sent: sendError ? 0 : logRows.length, failed: sendError ? logRows.length : 0, sgMessageId };
 }
 
-module.exports = { sendBatch, SENDGRID_MAX_PERSONALIZATIONS, FAILURE_STATUSES };
+module.exports = {
+  sendBatch,
+  SENDGRID_MAX_PERSONALIZATIONS,
+  FAILURE_STATUSES,
+  normalizeTrackedLinkEntries,
+};
